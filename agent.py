@@ -53,13 +53,16 @@ def _new_session(query: str, wardrobe: dict) -> dict:
 
 def run_agent(query: str, wardrobe: dict) -> dict:
     """
-    Main agent entry point. Runs the FitFindr planning loop for a single
-    user interaction and returns the completed session dict.
+    Main agent entry point with verbose logging for the demo video.
     """
-    # Step 1: Initialize the session
     session = _new_session(query, wardrobe)
 
-    # Step 2: Parse the user's query using Groq
+    print("\n" + "="*50)
+    print(f"🎬 NEW INTERACTION STARTED")
+    print(f"User Query: '{query}'")
+    print("="*50)
+
+    # Step 2: Parse the user's query
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     system_prompt = (
         "You are an extraction assistant. Extract the clothing description, size, and maximum price "
@@ -77,25 +80,27 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             ],
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"},
-            temperature=0.0 # Keep it deterministic for parsing
+            temperature=0.0 
         )
         parsed_data = json.loads(response.choices[0].message.content)
     except Exception:
-        # Graceful fallback if the LLM parsing fails
         parsed_data = {"description": query, "size": None, "max_price": None}
 
     session["parsed"] = parsed_data
 
-    # Step 3: Call search_listings with the parsed parameters
+    # Step 3: Call search_listings
     desc = session["parsed"].get("description", query)
     size = session["parsed"].get("size")
     max_price = session["parsed"].get("max_price")
 
+    print(f"\n🛠️ TOOL CALL 1: search_listings")
+    print(f"   ▶ Parameters: description='{desc}', size='{size}', max_price={max_price}")
+
     session["search_results"] = search_listings(description=desc, size=size, max_price=max_price)
 
-    # CRITICAL BRANCH: Check if search returned empty results
+    # Check for empty results
     if not session["search_results"]:
-        # Set the error and terminate early — do not call the next tools
+        print(f"   ❌ FAILURE MODE TRIGGERED: No results found.")
         session["error"] = (
             "I couldn't find any listings matching your description. "
             "Try broadening your search terms or increasing your budget!"
@@ -104,22 +109,29 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     # Step 4: Select the top item
     session["selected_item"] = session["search_results"][0]
-
-    print("\n--- STATE CHECK: SELECTED ITEM ---")
-    print(session["selected_item"])
+    print(f"   ✅ SUCCESS: Found {len(session['search_results'])} item(s).")
+    print(session["search_results"])
+    print(f"   💾 STATE SAVED: selected_item = '{session['selected_item']['title']}'")
 
     # Step 5: Call suggest_outfit
-    # The selected item state is explicitly passed into the outfit tool
+    print(f"\n🛠️ TOOL CALL 2: suggest_outfit")
+    print(f"   ▶ Parameters: new_item (Dictionary), wardrobe (Dictionary with {len(wardrobe.get('items', []))} items)")
+    
     session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
-
-    print("\n--- STATE CHECK: OUTFIT SUGGESTION ---")
-    print(session["outfit_suggestion"])
+    
+    print(f"   ✅ SUCCESS: Outfit generated.")
+    print(f"   💾 STATE SAVED: outfit_suggestion (String length: {len(session['outfit_suggestion'])})")
 
     # Step 6: Call create_fit_card
-    # Both the outfit state and item state are passed to the final tool
+    print(f"\n🛠️ TOOL CALL 3: create_fit_card")
+    print(f"   ▶ Parameters: outfit (String), new_item (Dictionary)")
+    
     session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+    
+    print(f"   ✅ SUCCESS: Fit card generated.")
+    print(f"   💾 STATE SAVED: fit_card (Ready for UI)")
+    print("="*50 + "\n")
 
-    # Step 7: Return the completed session
     return session
 
 
